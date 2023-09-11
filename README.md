@@ -1,4 +1,4 @@
-5G testbed for security reseach. Vagrant setup with two VMs, one fore 5G core network and another for RAN/UE. A modified version of Open5gs is used together with an [interceptor](https://github.com/theodorsm/5G-interceptor) to run testcases with modified NAS messages.
+5G testbed for security reseach. Vagrant setup with two VMs, one for 5G core network and another for RAN/UE. A [modified version of Open5gs](https://github.com/theodorsm/open5gs/tree/testcases) is used together with an [interceptor](https://github.com/theodorsm/5G-interceptor) to run testcases with modified NAS messages.
 
 ## Setup
 
