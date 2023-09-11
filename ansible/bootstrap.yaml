@@ -1,0 +1,214 @@
+---
+- name: Open5gs machine playbook that will be played during the first vagrant up (bootstrap)
+  hosts: open5gs
+  gather_facts: False
+  tasks:
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: 5G-CORE-VM
+    - name: Update repositories
+      apt:
+        update_cache: yes
+    - name: Upgrade the OS (apt-get upgrade)
+      apt:
+        upgrade: "yes"
+    - name: clone 5G-intercept source
+      git:
+        repo: https://github.com/theodorsm/5G-interceptor.git
+        dest: /root/5G-interceptor
+    - name: Install golang
+      apt:
+        pkg:
+          - golang-go
+    - name: Install the required packages for building open5gs
+      apt:
+        pkg:
+          - python3-pip
+          - python3-setuptools
+          - python3-wheel
+          - ninja-build
+          - build-essential
+          - flex
+          - bison
+          - git
+          - cmake
+          - libsctp-dev
+          - libgnutls28-dev
+          - libgcrypt-dev
+          - libssl-dev
+          - libidn11-dev
+          - libmongoc-dev
+          - libbson-dev
+          - libyaml-dev
+          - libnghttp2-dev
+          - libmicrohttpd-dev
+          - libcurl4-gnutls-dev
+          - libnghttp2-dev
+          - libtins-dev
+          - libtalloc-dev
+          - meson
+    - name: clone open5gs testcase source
+      git:
+        repo: https://github.com/theodorsm/open5gs.git
+        dest: /root/open5gs
+        version: testcases
+    - name: copy open5gs_tool
+      copy:
+        src: ../open5gs_tool.sh
+        dest: /root/open5gs_tool.sh
+        mode: +x
+    - name: copy open5gs config
+      copy:
+        src: ../config/open5gs
+        dest: /etc/
+    - name: copy mongo db
+      copy:
+        src: ../mongodb/
+        dest: /root/
+    - name: install gpg key mongodb
+      ansible.builtin.get_url:
+        url: "https://pgp.mongodb.com/server-6.0.asc"
+        dest: "/etc/apt/keyrings/mongo_6.0.asc"
+        mode: 0644
+    - name: install mongodb repo
+      apt_repository:
+        repo: >-
+          deb [
+           arch=amd64,arm64
+           signed-by=/etc/apt/keyrings/mongo_6.0.asc ]
+          https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/6.0
+          multiverse
+        filename: "mongodb-org-6.0"
+    - name: install group mongodb
+      group:
+        name: mongodb
+        gid: 28
+        system: true
+    - name: install user mongod
+      user:
+        name: mongodb
+        uid: 28
+        system: true
+        group: mongodb
+        comment: "MongoDB Server"
+        home: "/var/lib/mongodb"
+        create_home: false
+        shell: /sbin/nologin
+      register: set_user
+    - name: install mongodb
+      apt:
+        pkg:
+          - mongodb-org
+    - name: install mongodb log folder
+      file:
+        state: directory
+        path: "/var/log/mongodb"
+        mode: "0770"
+        owner: mongodb
+        group: mongodb
+    - name: Start mongod
+      systemd:
+        name: mongod
+        state: started
+        enabled: yes
+    - name: Install nodejs
+      apt:
+        name: nodejs
+        update_cache: yes
+    - name: Install npm
+      apt:
+        name: npm
+    - name: Symlink mongo
+      shell:
+        "ln -s /usr/bin/mongosh /usr/bin/mongo"
+        #     - name: Add a test user in the UDM/UDR database
+        #       shell: '/root/open5gs/misc/db/open5gs-dbctl add "999700000000001" "465B5CE8B199B49FAA5F0A2EE238A6BC" "E8ED289DEBA952E4283B54E88E6183CA"'
+    - name: mongo restore from dump with imsi
+      shell: mongorestore --gzip dump
+      args:
+        chdir: /root/
+    - name: open5gs meson
+      shell: meson build --prefix=/root/open5gs/install
+      args:
+        chdir: /root/open5gs
+    - name: open5gs build
+      shell: ninja -C build
+      args:
+        chdir: /root/open5gs
+    - name: open5gs install
+      shell: ninja install
+      args:
+        chdir: /root/open5gs/build
+    - name: create open5gs log directory
+      file:
+        path: /var/log/open5gs
+        state: directory
+    - name: open5gs create systemd entries
+      shell: /root/open5gs_tool.sh setup
+      args:
+        chdir: /root/open5gs/build
+    - name: open5gs enable
+      shell: /root/open5gs_tool.sh enable | bash
+      args:
+        chdir: /root/open5gs/build
+    - name: open5gs start
+      shell: /root/open5gs_tool.sh start | bash
+      args:
+        chdir: /root/open5gs/build
+
+- name: UERANSIM machine playbook that will be played during the first vagrant up (bootstrap)
+  hosts: ueransim
+  gather_facts: False
+  tasks:
+    - name: Set hostname
+      ansible.builtin.hostname:
+        name: 5G-RAN-UE-VM
+    - name: Wait for connectivity to the open5gs machine
+      wait_for:
+        host: "{{ open5gs_ipv4_addr|quote }}"
+        port: 22
+        state: started
+        delay: 3
+        sleep: 2
+        timeout: 30
+    - name: Update repository caches
+      apt:
+        update_cache: yes
+    - name: Upgrade the OS (apt-get upgrade)
+      apt:
+        upgrade: "yes"
+    - name: Install the required packages for ueransim machine
+      apt:
+        pkg:
+          - make
+          - gcc
+          - g++
+          - libsctp-dev
+          - lksctp-tools
+          - iproute2
+          - screen
+    - name: Install cmake snap with option --classic
+      snap:
+        name: cmake
+        state: present
+        classic: yes
+    - name: Clone UERANSIM git repository
+      ansible.builtin.git:
+        repo: "https://github.com/aligungr/UERANSIM"
+        dest: /root/UERANSIM/
+        clone: yes
+        update: no
+    - name: Check if nr-gnb file exists
+      stat:
+        path: /root/UERANSIM/build/nr-gnb
+      register: nr_gnb_stat
+    - name: Compile the UERANSIM repo with make
+      make:
+        chdir: /root/UERANSIM
+        params:
+          NUM_THREADS: 2
+      when: not nr_gnb_stat.stat.exists
+    - name: copy ueran config
+      copy:
+        src: ../config/ueransim/config
+        dest: /root/UERANSIM/
